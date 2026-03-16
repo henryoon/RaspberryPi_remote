@@ -1,0 +1,7 @@
+{"AfMode": 0, "LensPosition": 5.5}
+focal_length_x = 1522.36
+focal_length_y = 1520.01
+center_x = 612.83
+center_y = 370.20
+self.dist_coeffs = np.array([[-0.040964]], dtype=np.float32)
+------------------------------------------------------------
