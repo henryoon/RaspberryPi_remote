@@ -127,7 +127,7 @@ class RobotVisionSystem:
 # --- Flask Server ---
 app = Flask(__name__)
 # 실제 모델 경로로 수정하세요
-vision = RobotVisionSystem(model_path='/home/rnd/HJ/yolo_model/best_yolov26n.pt')
+vision = RobotVisionSystem(model_path='/home/rnd/yolo_model/best_yolov26n.pt')
 
 @app.route("/")
 def index():
