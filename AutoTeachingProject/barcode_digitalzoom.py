@@ -152,7 +152,7 @@ def index():
           <div><h3>Main View</h3><img src="/video_main" width="640"></div>
           <div><h3>Zoomed ROI</h3><img src="/video_zoom" width="480"></div>
         </div>
-        <p>상태: 바코드 인식 시 30초간 초점 고정 모드 작동 중</p>
+        <p>상태: 바코드 인식 시 30초간 초점 고정</p>
       </body>
     </html>
     """)
