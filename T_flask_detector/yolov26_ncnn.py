@@ -42,7 +42,7 @@ class RobotVisionSystem:
         try:
             self.picam2.set_controls({
                 "AfMode": 0, 
-                "LensPosition": 5.5 
+                "LensPosition": 2 
             })
             print("✅ 렌즈 초점 물리적 고정 완료 (LensPosition: 5.5)")
         except Exception as e:
