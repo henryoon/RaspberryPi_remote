@@ -1,3 +1,0 @@
-/home/rnd/HJ/AutoTeachingProject/build/CMakeFiles/MicroPlateDetection.dir
-/home/rnd/HJ/AutoTeachingProject/build/CMakeFiles/edit_cache.dir
-/home/rnd/HJ/AutoTeachingProject/build/CMakeFiles/rebuild_cache.dir
