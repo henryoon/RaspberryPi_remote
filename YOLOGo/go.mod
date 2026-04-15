@@ -2,4 +2,7 @@ module yologo
 
 go 1.22.1
 
-require gocv.io/x/gocv v0.43.0
+require (
+	github.com/pebbe/zmq4 v1.4.0
+	gocv.io/x/gocv v0.43.0
+)
