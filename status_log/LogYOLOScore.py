@@ -26,7 +26,7 @@ class RobotVisionSystem:
         
         # --- Performance Metrics Logging Setup ---
         # 저장 경로 확인 및 파일 초기화
-        self.csv_file = "/home/rnd/HJ/status_log/LogData/logyoloscore260415.csv"
+        self.csv_file = "/home/rnd/HJ/status_log/LogData/logyoloscore260416.csv"
         self._init_csv()
         
         # --- ZeroMQ Setup ---
@@ -75,7 +75,7 @@ class RobotVisionSystem:
 
         try:
             # 렌즈 초점 수동 고정 (Auto-Focus 비활성화)
-            self.picam2.set_controls({"AfMode": 0, "LensPosition": 5.5})
+            self.picam2.set_controls({"AfMode": 0, "LensPosition": 4})
             print("✅ 렌즈 초점 물리적 고정 완료 (LensPosition: 5.5)")
         except Exception as e:
             print(f"⚠️ AF 설정 오류: {e}")
