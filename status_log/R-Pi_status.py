@@ -67,7 +67,7 @@ class RaspberryPiMonitor:
 
 if __name__ == "__main__":
     # 요청하신 경로 설정
-    SAVE_PATH = '/home/rnd/HJ/status_log/R-Pi_status260414.csv'
+    SAVE_PATH = '/home/rnd/HJ/status_log/R-Pi_status260415.csv'
     
     # 모니터 객체 생성 및 실행 (1초 간격)
     monitor = RaspberryPiMonitor(SAVE_PATH)

@@ -53,8 +53,8 @@ class RobotVisionSystem:
         with open(self.csv_file, mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                'Timestamp', 'Avg_Conf', 'Inference_ms', 'Total_Latency_ms', 
-                'FPS', 'CPU_Temp', 'CPU_Usage', 'Memory_Usage'
+                'Timestamp', 'Avg_Conf(%)', 'InferenceTime(ms)', 'TotalLatencyTime(ms)', 
+                'FPS', 'CPU_Temp(℃)', 'CPU_Usage(%)', 'Memory_Usage(%)'
             ])
 
     def _get_cpu_temp(self):
@@ -169,9 +169,9 @@ class RobotVisionSystem:
                 writer = csv.writer(f)
                 writer.writerow([
                     time.strftime("%Y-%m-%d %H:%M:%S"),
-                    round(avg_conf, 4),
-                    round(inf_time, 2),
-                    round(total_lat, 2),
+                    round(avg_conf*100, 2),
+                    round(inf_time, 1),
+                    round(total_lat, 1),
                     round(fps, 2),
                     round(temp, 1),
                     cpu,
