@@ -26,7 +26,7 @@ class RobotVisionSystem:
         
         # --- Performance Metrics Logging Setup ---
         # 저장 경로 확인 및 파일 초기화
-        self.csv_file = "/home/rnd/HJ/status_log/LogData/logyoloscore260416.csv"
+        self.csv_file = "/home/rnd/HJ/status_log/LogData/logyoloscore260420.csv"
         self._init_csv()
         
         # --- ZeroMQ Setup ---
