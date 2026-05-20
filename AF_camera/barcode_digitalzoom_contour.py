@@ -26,6 +26,8 @@ class BarcodeDualVision:
         # 카메라 설정 (1920x1080)
         self.width, self.height = 1920, 1080
         self.roi_x, self.roi_y = 400, 120
+        # self.width, self.height = 3840, 2160
+        # self.roi_x, self.roi_y = 800, 240
         self.scale = 3
         
         self.picam2 = Picamera2()

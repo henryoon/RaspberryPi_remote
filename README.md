@@ -50,3 +50,9 @@ source /home/rnd/myenv/bin/activate
 ```
 deactivate
 ```
+
+### 새로운 카메라 추가
+```
+sudo nano /boot/firmware/config.txt
+```
+- dtoverlay=imx~~~을 추가하여 드라이버 활성화

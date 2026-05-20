@@ -5,3 +5,27 @@ center_x = 612.83
 center_y = 370.20
 self.dist_coeffs = np.array([[-0.040964]], dtype=np.float32)
 ------------------------------------------------------------
+focal_length_x = 1642.98
+focal_length_y = 1639.70
+center_x = 655.68
+center_y = 382.41
+self.camera_matrix = np.array([
+    [focal_length_x, 0, center_x],
+    [0, focal_length_y, center_y],
+    [0, 0, 1]
+], dtype=np.float32)
+self.dist_coeffs = np.array([[-0.039824]], dtype=np.float32)
+------------------------------------------------------------
+focal_length_x = 1421.35
+focal_length_y = 1420.57
+center_x = 951.42
+center_y = 551.88
+
+self.camera_matrix = np.array([
+    [focal_length_x, 0, center_x],
+    [0, focal_length_y, center_y],
+    [0, 0, 1]
+], dtype=np.float32)
+
+self.dist_coeffs = np.array([[0.000730]], dtype=np.float32)
+------------------------------------------------------------
