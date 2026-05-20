@@ -56,3 +56,19 @@ deactivate
 sudo nano /boot/firmware/config.txt
 ```
 - dtoverlay=imx~~~을 추가하여 드라이버 활성화
+
+### Docker 실행
+- Docker 데몬의 현재 상태 확인
+```
+sudo systemctl status docker
+```
+
+- Docker 데몬의 실행
+```
+sudo systemctl start docker
+```
+
+- Docker 데몬의 종료
+```
+sudo systemctl stop docker
+```
