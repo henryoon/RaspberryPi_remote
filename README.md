@@ -81,5 +81,5 @@ pip freeze > ./~~~/~~~/requirements.txt
 
 - 생성된 .txt 파일을 Trivy로 스캔
 ```
-trivy fs --scanners license ./HJ/AutoTeachingProject/requirements.txt
+trivy fs --scanners license ./~~~/~~~/requirements.txt
 ```
