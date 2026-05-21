@@ -72,3 +72,14 @@ sudo systemctl start docker
 ```
 sudo systemctl stop docker
 ```
+
+### 라이선스 검증 도구 Trivy 사용법
+- 파이썬 의존성 파일(requirements.txt) 수동 생성
+```
+pip freeze > ./~~~/~~~/requirements.txt
+```
+
+- 생성된 .txt 파일을 Trivy로 스캔
+```
+trivy fs --scanners license ./HJ/AutoTeachingProject/requirements.txt
+```
