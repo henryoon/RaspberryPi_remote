@@ -73,6 +73,20 @@ sudo systemctl start docker
 sudo systemctl stop docker
 ```
 
+### Taskset을 이용한 코어 분산 후 코드 실행
+```
+taskset -c 0 python Publisher_cameradata.py
+```
+```
+taskset -c 1 python Subscriber_AprilTagDetector.py
+```
+```
+taskset -c 2 python Subscriber_Barcode.py
+```
+```
+taskset -c 3 python Subscriber_yolo26n.py
+```
+
 ### 라이선스 검증 도구 Trivy 사용법
 - 파이썬 의존성 파일(requirements.txt) 수동 생성
 ```
