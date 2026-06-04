@@ -8,8 +8,7 @@ from ultralytics import YOLO
 
 
 class ZMQReceiverThread:
-    """ZeroMQ 데이터를 백그라운드에서 수신하고 가장 최신 프레임만 유지하는 클래스"""
-    # 💡 YOLO는 VGA 전용 스트림(5556)에 연결합니다.
+    """ZeroMQ 데이터를 바이트 형태로만 유지하여 디코딩 오버헤드를 없앤 클래스"""
     def __init__(self, ip="localhost", port=5556):
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
@@ -17,7 +16,7 @@ class ZMQReceiverThread:
         self.socket.connect(f"tcp://{ip}:{port}")
         self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-        self.latest_frame = None
+        self.latest_packet = None
         self.running = True
         self.lock = threading.Lock()
 
@@ -27,21 +26,25 @@ class ZMQReceiverThread:
     def _update(self):
         while self.running:
             try:
+                # 💡 데이터를 받기만 하고, 여기서 무거운 imdecode를 하지 않습니다.
                 packet = self.socket.recv()
-                np_arr = np.frombuffer(packet, dtype=np.uint8)
-                frame_vga = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                
-                if frame_vga is not None:
-                    # 💡 Publisher가 640x480으로 보내주므로 리사이징 생략
-                    with self.lock:
-                        self.latest_frame = frame_vga
+                with self.lock:
+                    self.latest_packet = packet
             except Exception as e:
                 print(f"⚠️ ZMQ 수신 에러: {e}")
                 break
 
-    def read(self):
+    def read_and_decode(self):
+        """필요할 때만 최신 패킷을 꺼내어 디코딩합니다."""
         with self.lock:
-            return self.latest_frame
+            packet = self.latest_packet
+            # 중복 디코딩 방지를 위해 사용한 패킷은 초기화
+            self.latest_packet = None 
+
+        if packet is not None:
+            np_arr = np.frombuffer(packet, dtype=np.uint8)
+            return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        return None
 
     def stop(self):
         self.running = False
@@ -56,34 +59,39 @@ class OptimizedRobotVision:
         self.output_frame = None
         self.running = True
         self.target_roi = (206, 212, 434, 268)
+        
+        # 💡 목표 추론 속도 설정 (예: 10 FPS = 0.1초 대기)
+        self.target_fps = 10.0
+        self.frame_time = 1.0 / self.target_fps
 
         print(f"⚙️ YOLO 모델 로딩 중... ({model_path})")
         self.model = YOLO(model_path, task='detect')
         self.receiver = ZMQReceiverThread(ip=ip, port=5556)
 
     def process_loop(self):
-        print("📥 YOLO 추론 루프 시작 (ONNX 모드)...")
+        print("📥 YOLO 추론 루프 시작 (Lazy Decoding & Target FPS 적용)...")
         prev_time = time.time()
 
         while self.running:
-            frame = self.receiver.read()
+            loop_start = time.time()
+
+            # 💡 이 시점에만 디코딩을 수행 (CPU 절약)
+            frame = self.receiver.read_and_decode()
             if frame is None:
                 time.sleep(0.01)
                 continue
 
-            # 💡 stream=True를 유지하여 메모리 효율성 극대화
             results_generator = self.model(frame, conf=0.5, verbose=False, stream=True)
             
-            # 제너레이터에서 첫 번째(이자 유일한) 프레임의 결과 추출
             for result in results_generator:
-                annotated_frame = result.plot()
+                # 💡 무거운 result.plot() 제거, 원본 프레임 복사본 사용
+                annotated_frame = frame.copy()
 
                 roi_x1, roi_y1, roi_x2, roi_y2 = self.target_roi
                 cv2.rectangle(annotated_frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (255, 255, 255), 1)
 
                 is_in_roi = False
                 
-                # 💡 result 객체의 boxes에 직접 접근
                 for box in result.boxes:
                     coords = box.xyxy[0].tolist()
                     x1, y1, x2, y2 = map(int, coords)
@@ -100,18 +108,18 @@ class OptimizedRobotVision:
                 fps = 1.0 / (curr_time - prev_time)
                 prev_time = curr_time
 
-                # cv2.putText(annotated_frame, f"FPS: {fps:.1f}", (10, 50),
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-
                 if is_in_roi:
                     cv2.putText(annotated_frame, "STATUS: DETECTED", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 else:
                     cv2.putText(annotated_frame, "STATUS: NONE", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
                 with self.lock:
-                    self.output_frame = annotated_frame.copy()
+                    self.output_frame = annotated_frame
 
-            time.sleep(0.01)
+            # 💡 설정된 Target FPS를 맞추기 위한 지능형 Sleep
+            elapsed_time = time.time() - loop_start
+            sleep_duration = max(0.01, self.frame_time - elapsed_time)
+            time.sleep(sleep_duration)
 
     def get_stream_frame(self):
         with self.lock:
@@ -139,7 +147,7 @@ def video_feed():
             frame = vision_sub.get_stream_frame()
             if frame:
                 yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            time.sleep(0.03)
+            time.sleep(0.04)
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == "__main__":

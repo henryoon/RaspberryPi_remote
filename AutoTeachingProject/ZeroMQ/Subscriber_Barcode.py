@@ -6,8 +6,7 @@ import zmq
 from flask import Flask, Response, render_template_string
 from pyzbar import pyzbar
 
-class ZMQReceiverThread_FHD:
-    """백그라운드에서 FHD(1920x1080) 해상도를 원본 그대로 수신하는 클래스"""
+class ZMQReceiverThread_LazyFHD:
     def __init__(self, ip="localhost", port=5555):
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
@@ -15,7 +14,7 @@ class ZMQReceiverThread_FHD:
         self.socket.connect(f"tcp://{ip}:{port}")
         self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-        self.latest_frame = None
+        self.latest_packet = None
         self.running = True
         self.lock = threading.Lock()
 
@@ -26,18 +25,20 @@ class ZMQReceiverThread_FHD:
         while self.running:
             try:
                 packet = self.socket.recv()
-                np_arr = np.frombuffer(packet, dtype=np.uint8)
-                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                
-                if frame is not None:
-                    with self.lock:
-                        self.latest_frame = frame
-            except Exception as e:
+                with self.lock:
+                    self.latest_packet = packet
+            except Exception:
                 break
 
-    def read(self):
+    def read_and_decode(self):
         with self.lock:
-            return self.latest_frame
+            packet = self.latest_packet
+            self.latest_packet = None 
+
+        if packet is not None:
+            np_arr = np.frombuffer(packet, dtype=np.uint8)
+            return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        return None
 
     def stop(self):
         self.running = False
@@ -60,14 +61,19 @@ class BarcodeDualVisionSubscriber:
         self.width, self.height = 1920, 1080
         self.roi_x, self.roi_y = 400, 120
         self.scale = 3
+        
+        # 💡 바코드는 초당 5번만 탐색해도 충분히 인식됩니다.
+        self.target_fps = 5.0
+        self.frame_time = 1.0 / self.target_fps
 
-        # 비동기 수신기 초기화 (포트 5555)
-        self.receiver = ZMQReceiverThread_FHD(ip=ip, port=5555)
+        self.receiver = ZMQReceiverThread_LazyFHD(ip=ip, port=5555)
 
     def process_loop(self):
-        print(f"📥 바코드 수신 시작 (비동기 처리)")
+        print(f"📥 바코드 수신 시작 (Lazy Decoding & Target FPS 5)")
         while self.running:
-            frame = self.receiver.read()
+            loop_start = time.time()
+
+            frame = self.receiver.read_and_decode()
             if frame is None:
                 time.sleep(0.01)
                 continue
@@ -100,7 +106,9 @@ class BarcodeDualVisionSubscriber:
                 self.main_frame = display_main
                 self.zoomed_frame = zoomed_roi
 
-            time.sleep(0.01)
+            elapsed_time = time.time() - loop_start
+            sleep_duration = max(0.01, self.frame_time - elapsed_time)
+            time.sleep(sleep_duration)
 
     def get_frame(self, target="main"):
         with self.lock:
@@ -113,7 +121,6 @@ class BarcodeDualVisionSubscriber:
         self.running = False
         self.receiver.stop()
 
-
 # --- Flask Web Server ---
 app = Flask(__name__)
 vision_sub = BarcodeDualVisionSubscriber(ip="localhost")
@@ -122,7 +129,7 @@ vision_sub = BarcodeDualVisionSubscriber(ip="localhost")
 def index():
     return render_template_string("""
     <html><body style="background-color:#111; color:white; text-align:center;">
-    <h2>📸 Barcode</h2>
+    <h2>📸 Barcode (Optimized)</h2>
     <div style="display:flex; justify-content:center; gap:20px;">
       <div><img src="/video_main" width="640"></div>
       <div><img src="/video_zoom" width="480"></div>
