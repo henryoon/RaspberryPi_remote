@@ -13,7 +13,8 @@ class ZMQReceiverThread:
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
         self.socket.set_hwm(2)
-        self.socket.connect(f"tcp://{ip}:{port}")
+        # self.socket.connect(f"tcp://{ip}:{port}")
+        self.socket.connect("ipc:///tmp/vision_vga")
         self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
         self.latest_packet = None
@@ -81,7 +82,7 @@ class OptimizedRobotVision:
                 time.sleep(0.01)
                 continue
 
-            results_generator = self.model(frame, conf=0.5, verbose=False, stream=True)
+            results_generator = self.model(frame, conf=0.4, verbose=False, stream=True)
             
             for result in results_generator:
                 # 💡 무거운 result.plot() 제거, 원본 프레임 복사본 사용
@@ -113,19 +114,21 @@ class OptimizedRobotVision:
                 else:
                     cv2.putText(annotated_frame, "STATUS: NONE", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                with self.lock:
-                    self.output_frame = annotated_frame
+                # 💡 수정: 루프 내에서 딱 1번만 JPEG로 압축하여 저장 (Caching)
+                success, buffer = cv2.imencode(".jpg", annotated_frame)
+                if success:
+                    encoded_jpg = bytearray(buffer)
+                    with self.lock:
+                        self.output_frame = encoded_jpg # 배열이 아닌 압축된 바이트 자체를 저장
 
-            # 💡 설정된 Target FPS를 맞추기 위한 지능형 Sleep
             elapsed_time = time.time() - loop_start
             sleep_duration = max(0.01, self.frame_time - elapsed_time)
             time.sleep(sleep_duration)
 
     def get_stream_frame(self):
         with self.lock:
-            if self.output_frame is None: return None
-            success, buffer = cv2.imencode(".jpg", self.output_frame)
-            return bytearray(buffer) if success else None
+            # 💡 수정: 연산 없이 이미 압축된 바이트만 즉시 반환
+            return self.output_frame
 
     def release(self):
         self.running = False
@@ -147,7 +150,8 @@ def video_feed():
             frame = vision_sub.get_stream_frame()
             if frame:
                 yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            time.sleep(0.04)
+            # 💡 수정: YOLO 추론 속도(약 10FPS)에 맞춰 웹 송출 속도도 낮춤 (0.04 -> 0.1)
+            time.sleep(0.1) 
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == "__main__":

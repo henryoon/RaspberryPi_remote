@@ -78,13 +78,10 @@ sudo systemctl stop docker
 taskset -c 0 python Publisher_cameradata.py
 ```
 ```
-taskset -c 1 python Subscriber_AprilTagDetector.py
+taskset -c 1,2 python Subscriber_AprilTagBarcodeScanner.py
 ```
 ```
-taskset -c 2 python Subscriber_Barcode.py
-```
-```
-taskset -c 3 python Subscriber_yolo26n.py
+taskset -c 0,3 python Subscriber_yolo26n.py
 ```
 
 ### 라이선스 검증 도구 Trivy 사용법

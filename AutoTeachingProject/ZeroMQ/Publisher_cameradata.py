@@ -21,12 +21,14 @@ class CameraPublisher:
         # 1. 고해상도(FHD) 퍼블리셔 (Barcode, AprilTag 용) - 포트 5555
         self.socket_fhd = self.context.socket(zmq.PUB)
         self.socket_fhd.set_hwm(2)
-        self.socket_fhd.bind(f"tcp://{self.host}:5555")
+        # self.socket_fhd.bind(f"tcp://{self.host}:5555")
+        self.socket_fhd.bind("ipc:///tmp/vision_fhd")
 
         # 2. 저해상도(VGA) 퍼블리셔 (YOLO 용) - 포트 5556
         self.socket_vga = self.context.socket(zmq.PUB)
         self.socket_vga.set_hwm(2)
-        self.socket_vga.bind(f"tcp://{self.host}:5556")
+        # self.socket_vga.bind(f"tcp://{self.host}:5556")
+        self.socket_vga.bind("ipc:///tmp/vision_vga")
 
         self.picam2 = Picamera2()
         self._setup_camera()
