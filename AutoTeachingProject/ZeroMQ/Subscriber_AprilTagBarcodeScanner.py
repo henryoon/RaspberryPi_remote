@@ -196,7 +196,8 @@ class UnifiedVisionSubscriber:
                     cv2.line(frame_tag, tuple(corners_int[j]), tuple(corners_int[(j+1)%4]), (0, 255, 0), 2)
                 
                 cx, cy = int(tag.center[0]), int(tag.center[1])
-                cv2.circle(frame_tag, (cx, cy), 6, (255, 255, 255), -1)
+                cv2.circle(frame_tag, (cx, cy), 5, (255, 0, 0), -1)
+                cv2.circle(frame_tag, (self.tag_w//2, self.tag_h//2), 5, (0, 0, 255), -1)
 
                 if tag_id not in self.kf_dict:
                     self.kf_dict[tag_id] = {

@@ -75,7 +75,7 @@ sudo systemctl stop docker
 
 ### Taskset을 이용한 코어 분산 후 코드 실행
 ```
-taskset -c 0 python Publisher_cameradata.py
+taskset -c 0,3 python Publisher_cameradata.py
 ```
 ```
 taskset -c 1,2 python Subscriber_AprilTagBarcodeScanner.py

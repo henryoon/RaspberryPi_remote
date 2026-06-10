@@ -32,8 +32,7 @@ class WebCameraCalibrator:
         self.captured_count = 0
         
         # 카메라 해상도
-        # self.width, self.height = 1280, 720
-        self.width, self.height = 1920, 1080
+        self.width, self.height = 1280, 720
         self.picam2 = Picamera2()
         self._setup_camera()
 
