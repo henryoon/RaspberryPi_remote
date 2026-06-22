@@ -1,6 +1,7 @@
 import time
 import cv2
-import zmq
+import numpy as np
+from multiprocessing import shared_memory
 
 try:
     from picamera2 import Picamera2
@@ -9,29 +10,37 @@ except ImportError:
     exit()
 
 
-class CameraPublisher:
-    """Picamera2 영상을 FHD(5555)와 VGA(5556) 두 개의 스트림으로 브로드캐스팅하는 클래스"""
+class CameraPublisherSHM:
+    """Picamera2 영상을 FHD와 VGA 두 개의 Shared Memory 블록으로 매핑하는 클래스"""
 
-    def __init__(self, host: str = "*"):
-        self.host = host
+    def __init__(self):
         self.width, self.height = 1920, 1080
+        self.vga_w, self.vga_h = 640, 480
 
-        self.context = zmq.Context()
-        
-        # 1. 고해상도(FHD) 퍼블리셔 (Barcode, AprilTag 용) - 포트 5555
-        self.socket_fhd = self.context.socket(zmq.PUB)
-        self.socket_fhd.set_hwm(2)
-        # self.socket_fhd.bind(f"tcp://{self.host}:5555")
-        self.socket_fhd.bind("ipc:///tmp/vision_fhd")
+        # RGB 8비트 채널(3) 크기 계산
+        self.size_fhd = self.width * self.height * 3
+        self.size_vga = self.vga_w * self.vga_h * 3
 
-        # 2. 저해상도(VGA) 퍼블리셔 (YOLO 용) - 포트 5556
-        self.socket_vga = self.context.socket(zmq.PUB)
-        self.socket_vga.set_hwm(2)
-        # self.socket_vga.bind(f"tcp://{self.host}:5556")
-        self.socket_vga.bind("ipc:///tmp/vision_vga")
+        # 공유 메모리 블록 생성 (기존에 비정상 종료된 메모리가 있다면 정리 후 생성)
+        self.shm_fhd = self._init_shared_memory("vision_fhd", self.size_fhd)
+        self.shm_vga = self._init_shared_memory("vision_vga", self.size_vga)
+
+        # 공유 메모리 버퍼를 NumPy 배열로 매핑
+        self.frame_fhd_shared = np.ndarray((self.height, self.width, 3), dtype=np.uint8, buffer=self.shm_fhd.buf)
+        self.frame_vga_shared = np.ndarray((self.vga_h, self.vga_w, 3), dtype=np.uint8, buffer=self.shm_vga.buf)
 
         self.picam2 = Picamera2()
         self._setup_camera()
+
+    def _init_shared_memory(self, name: str, size: int):
+        """기존 메모리 블록 충돌 방지를 포함한 Shared Memory 초기화 로직"""
+        try:
+            return shared_memory.SharedMemory(create=True, size=size, name=name)
+        except FileExistsError:
+            print(f"⚠️ 기존 공유 메모리 '{name}' 정리 중...")
+            shm = shared_memory.SharedMemory(name=name)
+            shm.unlink()
+            return shared_memory.SharedMemory(create=True, size=size, name=name)
 
     def _setup_camera(self):
         print(f"📷 Camera Module 3 초기화 ({self.width}x{self.height})...")
@@ -40,25 +49,18 @@ class CameraPublisher:
         )
         self.picam2.configure(config)
         self.picam2.start()
-        self._set_af_mode(continuous=True)
-
-    def _set_af_mode(self, continuous: bool = True):
+        
+        # AF 모드 고정
         try:
-            if continuous:
-                self.picam2.set_controls({"AfMode": 2})
-                time.sleep(1.0)
-                self.picam2.set_controls({"AfMode": 0, "LensPosition": 5.5})
-                status = "초점 보정 후 고정 완료 (LensPosition: 5.5)"
-            else:
-                self.picam2.set_controls({"AfMode": 0, "LensPosition": 5.5})
-                status = "고정 모드 유지"
-            print(f"🔄 {status}")
+            self.picam2.set_controls({"AfMode": 2})
+            time.sleep(1.0)
+            self.picam2.set_controls({"AfMode": 0, "LensPosition": 5.5})
+            print("🔄 초점 보정 후 고정 완료 (LensPosition: 5.5)")
         except Exception as e:
             print(f"⚠️ AF 오류: {e}")
 
-    def start_streaming(self, jpeg_quality: int = 80):
-        print(f"🚀 Dual Streaming started -> FHD:5555 | VGA:5556")
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
+    def start_streaming(self):
+        print(f"🚀 Shared Memory Streaming started -> [vision_fhd], [vision_vga]")
         
         try:
             while True:
@@ -67,17 +69,13 @@ class CameraPublisher:
                     continue
 
                 frame_fhd = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+                frame_vga = cv2.resize(frame_fhd, (self.vga_w, self.vga_h), interpolation=cv2.INTER_AREA)
 
-                # 1. FHD 데이터 송신
-                _, enc_fhd = cv2.imencode(".jpg", frame_fhd, encode_param)
-                self.socket_fhd.send(enc_fhd.tobytes())
+                # 💡 Shared Memory 버퍼에 직접 복사 (인코딩 오버헤드 0)
+                np.copyto(self.frame_fhd_shared, frame_fhd)
+                np.copyto(self.frame_vga_shared, frame_vga)
 
-                # 2. VGA 리사이징 및 데이터 송신
-                frame_vga = cv2.resize(frame_fhd, (640, 480), interpolation=cv2.INTER_AREA)
-                _, enc_vga = cv2.imencode(".jpg", frame_vga, encode_param)
-                self.socket_vga.send(enc_vga.tobytes())
-
-                # 송신 주기를 0.05초(최대 20FPS)로 제한하여 CPU 및 네트워크 과부하 방지
+                # 송신 주기를 0.05초(최대 20FPS)로 제한
                 time.sleep(0.05)
         except KeyboardInterrupt:
             print("\n스트리밍을 중단합니다.")
@@ -86,12 +84,13 @@ class CameraPublisher:
 
     def release(self):
         self.picam2.stop()
-        self.socket_fhd.close()
-        self.socket_vga.close()
-        self.context.term()
-        print("Publisher 자원이 해제되었습니다.")
+        self.shm_fhd.close()
+        self.shm_fhd.unlink()
+        self.shm_vga.close()
+        self.shm_vga.unlink()
+        print("Publisher 공유 메모리 자원이 안전하게 해제되었습니다.")
 
 
 if __name__ == "__main__":
-    pub = CameraPublisher(host="*")
-    pub.start_streaming(jpeg_quality=80)
+    pub = CameraPublisherSHM()
+    pub.start_streaming()
