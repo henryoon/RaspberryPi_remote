@@ -279,7 +279,7 @@ def index():
         </style>
       </head>
       <body>
-        <h2>Integrated Robot Vision Dashboard</h2>
+        <!-- <h2>Integrated Robot Vision Dashboard</h2> -->
         <div class="grid-container">
           
           <div class="video-card">
@@ -289,7 +289,7 @@ def index():
           
           <div class="video-card">
             <h3>YOLO Microplate (640x480)</h3>
-            <img src="/video/yolo" width="640" class="stream-img">
+            <img src="/video/yolo" width="480" class="stream-img">
           </div>
           
           <div class="video-card">
