@@ -2,6 +2,7 @@ import time
 import threading
 import multiprocessing
 import cv2
+import os
 import numpy as np
 import zmq
 import json
@@ -15,6 +16,13 @@ try:
     from picamera2 import Picamera2
 except ImportError:
     print("⚠️ 오류: picamera2를 찾을 수 없습니다. (라즈베리파이 환경에서 실행해주세요)")
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+cv2.setNumThreads(1)  # OpenCV 스레드 수 제한 (YOLO 모델 로딩 시 CPU 과부하 방지)
 
 # ==========================================
 # 1. Camera Publisher 클래스
@@ -75,7 +83,6 @@ class CameraPublisherSHM:
             self.shm_fhd.close(); self.shm_fhd.unlink()
             self.shm_vga.close(); self.shm_vga.unlink()
 
-# Publisher를 실행할 래퍼 함수 (멀티프로세싱용)
 def run_publisher():
     pub = CameraPublisherSHM()
     pub.start_streaming()
@@ -103,7 +110,12 @@ class IntegratedVisionSubscriber:
     def __init__(self, yolo_model_path: str):
         self.lock = threading.Lock()
         self.running = True
-        self.apriltag_jpg = self.barcode_main_jpg = self.barcode_zoom_jpg = self.yolo_jpg = None
+        
+        # 💡 [최적화] JPG 바이트 대신 원본 NumPy Array 참조 보관용 변수로 변경
+        self.apriltag_frame = None
+        self.barcode_main_frame = None
+        self.barcode_zoom_frame = None
+        self.yolo_frame = None
 
         print("🔗 Shared Memory 연결 대기 중...")
         while True:
@@ -147,18 +159,21 @@ class IntegratedVisionSubscriber:
             loop_start = time.time()
             frame_fhd = self.fhd_buffer.copy()
 
-            # Barcode
+            # 1. Barcode 처리
             h, w, _ = frame_fhd.shape
             x1, y1 = (w - self.bc_roi_x) // 2, (h - self.bc_roi_y) // 2 + 30
             x2, y2 = x1 + self.bc_roi_x, y1 + self.bc_roi_y
             roi_img = frame_fhd[y1:y2, x1:x2]
-            zoomed_roi = cv2.resize(roi_img, (self.bc_roi_x * self.bc_scale, self.bc_roi_y * self.bc_scale))
+            
+            # 💡 [최적화 병목 3] INTER_NEAREST 적용 (초고속 업스케일링)
+            zoomed_roi = cv2.resize(roi_img, (self.bc_roi_x * self.bc_scale, self.bc_roi_y * self.bc_scale), interpolation=cv2.INTER_NEAREST)
             decoded = pyzbar.decode(zoomed_roi)
             
             detected_barcodes = []
             roi_color = (0, 255, 0) if len(decoded) > 0 else (255, 255, 255)
-            display_bc_main = frame_fhd.copy()
-            cv2.rectangle(display_bc_main, (x1, y1), (x2, y2), roi_color, 2)
+            
+            # 💡 [최적화 병목 1] display_bc_main 이중 복사 제거. 원본 프레임(frame_fhd)에 직접 드로잉
+            cv2.rectangle(frame_fhd, (x1, y1), (x2, y2), roi_color, 2)
 
             for obj in decoded:
                 data = obj.data.decode("utf-8")
@@ -167,8 +182,8 @@ class IntegratedVisionSubscriber:
             if detected_barcodes:
                 self.barcode_pub.send_string(json.dumps({"timestamp": time.time(), "barcodes": detected_barcodes}))
 
-            # AprilTag
-            frame_tag = cv2.resize(frame_fhd, (self.tag_w, self.tag_h))
+            # 2. AprilTag 처리
+            frame_tag = cv2.resize(frame_fhd, (self.tag_w, self.tag_h), interpolation=cv2.INTER_AREA)
             gray = cv2.cvtColor(frame_tag, cv2.COLOR_BGR2GRAY)
             tags = self.detector.detect(gray, estimate_tag_pose=False)
             detected_tags_data = []
@@ -196,85 +211,85 @@ class IntegratedVisionSubscriber:
             if detected_tags_data:
                 self.tag_pub.send_string(json.dumps({"tags": detected_tags_data}))
 
-            _, bc_main_jpg = cv2.imencode(".jpg", display_bc_main)
-            _, bc_zoom_jpg = cv2.imencode(".jpg", zoomed_roi)
-            _, tag_jpg = cv2.imencode(".jpg", frame_tag)
-
+            # 💡 [최적화 병목 1] 루프 내부의 무거운 cv2.imencode 제거 및 배열 단순 참조 저장
             with self.lock:
-                self.barcode_main_jpg = bytearray(bc_main_jpg)
-                self.barcode_zoom_jpg = bytearray(bc_zoom_jpg)
-                self.apriltag_jpg = bytearray(tag_jpg)
+                self.barcode_main_frame = frame_fhd
+                self.barcode_zoom_frame = zoomed_roi
+                self.apriltag_frame = frame_tag
 
             time.sleep(max(0.01, frame_time - (time.time() - loop_start)))
 
     def loop_vga_tasks(self):
-        """스레드 2: YOLO 객체 인식 처리 (목표 15 FPS)"""
-        frame_time = 1.0 / 15.0
+        """스레드 2: YOLO 객체 인식 처리 (목표 10 FPS)"""
+        frame_time = 1.0 / 10.0
         
         while self.running:
             loop_start = time.time()
             
-            # 1. 공유 메모리에서 VGA 프레임 복사
             frame_vga = self.vga_buffer.copy()
-
-            # 2. YOLO 모델 추론 (제너레이터 스트림 방식)
             results = self.yolo_model(frame_vga, conf=0.4, verbose=False, stream=True)
             annotated_frame = frame_vga.copy()
             
-            # 3. 관심 영역(ROI) 렌더링
             roi_x1, roi_y1, roi_x2, roi_y2 = self.target_roi
             cv2.rectangle(annotated_frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (255, 255, 255), 1)
 
             is_in_roi = False
-            detected_centers = [] # 추적된 객체들의 중심 좌표 저장 리스트
+            detected_centers = []
 
-            # 4. 바운딩 박스 및 중심점 추출
             for result in results:
                 for box in result.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    
                     detected_centers.append({"x": cx, "y": cy})
                     
-                    # 중심점이 ROI 안에 들어왔는지 판별
                     if (roi_x1 <= cx <= roi_x2) and (roi_y1 <= cy <= roi_y2):
                         is_in_roi = True
                         color = (0, 255, 0)
                     else:
                         color = (0, 0, 255)
-                        
                     cv2.circle(annotated_frame, (cx, cy), 5, color, -1)
 
-            # 5. 💡 [ZMQ Publish] YOLO 인식 상태 및 좌표 JSON 송신 (5559 포트)
             yolo_payload = {
                 "timestamp": time.time(),
                 "is_in_roi": is_in_roi,
                 "detected_objects": detected_centers
             }
-            # 외부 로봇 제어기가 구독할 수 있도록 데이터 발행
             self.yolo_pub.send_string(json.dumps(yolo_payload))
 
-            # 6. 화면 송출용 상태 텍스트 오버레이
             status_text = "STATUS: DETECTED" if is_in_roi else "STATUS: NONE"
             status_color = (0, 255, 0) if is_in_roi else (0, 0, 255)
             cv2.putText(annotated_frame, status_text, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
 
-            # 7. 💡 [GUI 렌더링용] NumPy Array 원본을 안전하게 변수에 저장
-            _, yolo_encoded = cv2.imencode(".jpg", annotated_frame)
+            # 💡 [최적화 병목 1] 루프 내부의 무거운 cv2.imencode 제거 및 배열 단순 참조 저장
             with self.lock:
-                self.yolo_jpg = bytearray(yolo_encoded)
+                self.yolo_frame = annotated_frame
 
-            # 8. 목표 프레임 레이트(15FPS) 유지를 위한 스마트 슬립
-            elapsed_time = time.time() - loop_start
-            time.sleep(max(0.01, frame_time - elapsed_time))
+            time.sleep(max(0.01, frame_time - (time.time() - loop_start)))
 
-    def get_frame(self, target):
+    def get_encoded_frame(self, target):
+        """요청이 들어올 때만(JIT) 해당 프레임을 JPEG로 인코딩하여 반환"""
         with self.lock:
-            if target == "apriltag": return self.apriltag_jpg
-            elif target == "barcode_main": return self.barcode_main_jpg
-            elif target == "barcode_zoom": return self.barcode_zoom_jpg
-            elif target == "yolo": return self.yolo_jpg
+            if target == "apriltag":
+                frame = self.apriltag_frame
+            elif target == "barcode_main":
+                frame = self.barcode_main_frame
+            elif target == "barcode_zoom":
+                frame = self.barcode_zoom_frame
+            elif target == "yolo":
+                frame = self.yolo_frame
+            else:
+                frame = None
+
+        if frame is None:
             return None
+
+        # 💡 [최적화 병목 1] JPEG 품질을 80으로 설정하여 인코딩 속도 향상 및 대역폭 절약
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+        success, encoded_jpg = cv2.imencode(".jpg", frame, encode_params)
+        
+        if success:
+            return bytearray(encoded_jpg)
+        return None
 
 
 # ==========================================
@@ -283,7 +298,6 @@ class IntegratedVisionSubscriber:
 app = Flask(__name__)
 vision_sub = None 
 
-# 모던하고 사이버네틱한 UI가 적용된 HTML 템플릿
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -292,116 +306,42 @@ DASHBOARD_HTML = """
     <title>AI Vision Control Center</title>
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            background-color: #0b0f19;
-            color: #e2e8f0;
-            font-family: 'Rajdhani', sans-serif;
-            margin: 0;
-            padding: 20px 40px;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #1e293b;
-            padding-bottom: 15px;
-            margin-bottom: 30px;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 2.2rem;
-            color: #38bdf8;
-            letter-spacing: 1px;
-            text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
-        }
-        .status-badge {
-            background: rgba(16, 185, 129, 0.1);
-            color: #10b981;
-            padding: 8px 16px;
-            border-radius: 20px;
-            border: 1px solid #10b981;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .dot {
-            width: 10px; height: 10px;
-            background-color: #10b981;
-            border-radius: 50%;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-        .grid-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
-            gap: 30px;
-            justify-content: center;
-        }
-        .video-card {
-            background: rgba(30, 41, 59, 0.7);
-            backdrop-filter: blur(10px);
-            padding: 20px;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .video-card h3 {
-            margin: 0 0 15px 0;
-            font-size: 1.3rem;
-            color: #94a3b8;
-            width: 100%;
-            text-align: left;
-            border-left: 4px solid #3b82f6;
-            padding-left: 10px;
-        }
+        body { background-color: #0b0f19; color: #e2e8f0; font-family: 'Rajdhani', sans-serif; margin: 0; padding: 20px 40px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 15px; margin-bottom: 30px; }
+        .header h1 { margin: 0; font-size: 2.2rem; color: #38bdf8; letter-spacing: 1px; text-shadow: 0 0 10px rgba(56, 189, 248, 0.4); }
+        .status-badge { background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 8px 16px; border-radius: 20px; border: 1px solid #10b981; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        .dot { width: 10px; height: 10px; background-color: #10b981; border-radius: 50%; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(600px, 1fr)); gap: 30px; justify-content: center; }
+        .video-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); padding: 20px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; align-items: center; }
+        .video-card h3 { margin: 0 0 15px 0; font-size: 1.3rem; color: #94a3b8; width: 100%; text-align: left; border-left: 4px solid #3b82f6; padding-left: 10px; }
         .video-card.yolo h3 { border-left-color: #f59e0b; }
         .video-card.barcode h3 { border-left-color: #10b981; }
-        .stream-img {
-            border-radius: 8px;
-            border: 1px solid #334155;
-            background-color: #000;
-            max-width: 100%;
-            height: auto;
-        }
-        .highlight .stream-img {
-            border: 2px solid #22c55e;
-            box-shadow: 0 0 20px rgba(34, 197, 94, 0.2);
-        }
+        .stream-img { border-radius: 8px; border: 1px solid #334155; background-color: #000; max-width: 100%; height: auto; }
+        .highlight .stream-img { border: 2px solid #22c55e; box-shadow: 0 0 20px rgba(34, 197, 94, 0.2); }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🤖 AI Vision Control Center</h1>
+        <h1>Bio SCARA Function</h1>
         <div class="status-badge"><div class="dot"></div>SYSTEM ONLINE</div>
     </div>
-    
     <div class="grid-container">
         <div class="video-card">
             <h3>AprilTag Pose Estimation</h3>
             <img src="/video/apriltag" width="640" class="stream-img">
         </div>
-        
         <div class="video-card yolo">
             <h3>YOLO Microplate Detection</h3>
             <img src="/video/yolo" width="480" class="stream-img">
         </div>
-        
         <div class="video-card barcode">
             <h3>Barcode ROI (Main)</h3>
             <img src="/video/barcode_main" width="640" class="stream-img">
         </div>
-        
         <div class="video-card barcode highlight" style="justify-content: center;">
             <h3>Barcode Zoom & Decode</h3>
-            <img src="/video/barcode_zoom" width="480" class="stream-img">
+            <img src="/video/barcode_zoom" width="640" class="stream-img">
         </div>
     </div>
 </body>
@@ -416,9 +356,10 @@ def index():
 def video_feed(target):
     def gen():
         while True:
-            frame = vision_sub.get_frame(target)
-            if frame: 
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+            # 💡 [최적화 병목 1] 브라우저 연결 시에만 JIT 인코딩된 프레임을 가져옴
+            frame_bytes = vision_sub.get_encoded_frame(target)
+            if frame_bytes: 
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
             time.sleep(0.1)
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
@@ -427,15 +368,11 @@ def video_feed(target):
 # 4. Main Entry Point (Process 분기)
 # ==========================================
 if __name__ == "__main__":
-    # 1. 카메라 연산을 백그라운드 프로세스로 분리 실행
-    # (Picamera2는 메인 프로세스와 분리되어야 리소스 충돌이 방지됩니다)
     cam_process = multiprocessing.Process(target=run_publisher, daemon=True)
     cam_process.start()
 
-    # Shared Memory가 생성될 시간을 약간 확보
     time.sleep(2.0)
 
-    # 2. 비전 분석 Subscriber 초기화 및 스레드 실행
     yolo_path = '/home/rnd/yolo_model/best_yolov26n.onnx'
     vision_sub = IntegratedVisionSubscriber(yolo_model_path=yolo_path)
     
@@ -444,6 +381,5 @@ if __name__ == "__main__":
     t_fhd.start()
     t_vga.start()
     
-    # 3. Flask 웹 서버 실행 (블로킹 함수이므로 맨 마지막에 호출)
     print("\n✅ 모든 시스템이 시작되었습니다. 웹 브라우저에서 서버 IP의 5000 포트로 접속하세요.\n")
     app.run(host="0.0.0.0", port=5000)
