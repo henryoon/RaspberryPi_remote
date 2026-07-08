@@ -169,8 +169,8 @@ class IntegratedVisionSubscriber:
 
     def _build_disabled_placeholder(self):
         placeholder = np.zeros((360, 640, 3), dtype=np.uint8)
-        cv2.putText(placeholder, "DISABLED", (170, 170), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (110, 110, 110), 3)
-        cv2.putText(placeholder, "function is turned off", (140, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (70, 70, 70), 1)
+        cv2.putText(placeholder, "DISABLED", (220, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (110, 110, 110), 3)
+        # cv2.putText(placeholder, "function is turned off", (140, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (70, 70, 70), 1)
         success, encoded = cv2.imencode(".jpg", placeholder, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
         return bytearray(encoded) if success else None
 
