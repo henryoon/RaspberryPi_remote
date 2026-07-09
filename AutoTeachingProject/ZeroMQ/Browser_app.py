@@ -145,15 +145,21 @@ class IntegratedVisionSubscriber:
         self.barcode_pub.bind("ipc:///tmp/vision_barcode.ipc")
         self.yolo_pub.bind("ipc:///tmp/vision_yolo.ipc")
 
-        self.tag_size = 0.03
+        self.tag_size = 0.021
         self.half_s = self.tag_size / 2.0
         
         # 1920x1080 비율에 맞게 스케일링된 카메라 매트릭스
+        # self.camera_matrix = np.array([
+        #     [1377.30483, 0, 968.26621],
+        #     [0, 1381.74778, 531.14559],
+        #     [0, 0, 1]
+        # ], dtype=np.float32)
+        # self.dist_coeffs = np.array([[-0.02188, 0.33220, 0.00308, 0.00052, -0.50083]], dtype=np.float32)
         self.camera_matrix = np.array([
-            [1377.30483, 0, 968.26621],
-            [0, 1381.74778, 531.14559],
-            [0, 0, 1]
-        ], dtype=np.float32)
+                    [1377.30483, 0, 970.26621],
+                    [0, 1381.74778, 531.14559],
+                    [0, 0, 1]
+                ], dtype=np.float32)
         self.dist_coeffs = np.array([[-0.02188, 0.33220, 0.00308, 0.00052, -0.50083]], dtype=np.float32)
         self.obj_points = np.array([[-self.half_s, -self.half_s, 0], [self.half_s, -self.half_s, 0],
                                     [self.half_s, self.half_s, 0], [-self.half_s, self.half_s, 0]], dtype=np.float32)
@@ -266,6 +272,7 @@ class IntegratedVisionSubscriber:
                         
                         # AprilTag 전용 프레임에만 텍스트를 작성합니다.
                         cv2.putText(frame_apriltag, f"{detected_tags_data[-1]}", (20, 50 + (i*40)), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
+                        cv2.circle(frame_apriltag, (1920//2, 1080//2), 8, (0, 0, 255), -1)
 
                 if detected_tags_data:
                     self.tag_pub.send_string(json.dumps({"tags": detected_tags_data}))
