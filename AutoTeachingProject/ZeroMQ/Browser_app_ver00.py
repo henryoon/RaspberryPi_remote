@@ -1,8 +1,13 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 import time
 import threading
 import multiprocessing
 import cv2
-import os
 import numpy as np
 import zmq
 import json
@@ -17,11 +22,6 @@ try:
 except ImportError:
     print("⚠️ 오류: picamera2를 찾을 수 없습니다. (라즈베리파이 환경에서 실행해주세요)")
 
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
 cv2.setNumThreads(1)  # OpenCV 스레드 수 제한 (YOLO 모델 로딩 시 CPU 과부하 방지)
 
 # ==========================================
@@ -163,7 +163,7 @@ class IntegratedVisionSubscriber:
         self.dist_coeffs = np.array([[-0.02188, 0.33220, 0.00308, 0.00052, -0.50083]], dtype=np.float32)
         self.obj_points = np.array([[-self.half_s, -self.half_s, 0], [self.half_s, -self.half_s, 0],
                                     [self.half_s, self.half_s, 0], [-self.half_s, self.half_s, 0]], dtype=np.float32)
-        self.detector = Detector(families='tag36h11', nthreads=1, quad_decimate=2.0, debug=0)
+        self.detector = Detector(families='tag36h11', nthreads=1, quad_decimate=1.0, debug=0)
         self.kf_dict = {}
         self.bc_roi_x, self.bc_roi_y, self.bc_scale = 400, 120, 3
 
@@ -422,7 +422,7 @@ DASHBOARD_HTML = """
                 <h3>YOLO Microplate Detection</h3>
                 <button class="toggle-btn on" data-feature="yolo" data-enabled="true" onclick="toggleFeature('yolo', this)">ON</button>
             </div>
-            <img src="/video/yolo" width="480" class="stream-img">
+            <img src="/video/yolo" width="440" class="stream-img">
         </div>
         <div class="video-card barcode">
             <div class="card-header">
@@ -535,4 +535,4 @@ if __name__ == "__main__":
     t_vga.start()
 
     print("\n✅ 모든 시스템이 시작되었습니다. 웹 브라우저에서 서버 IP의 5000 포트로 접속하세요.\n")
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, threaded=True)
